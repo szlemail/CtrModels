@@ -11,6 +11,7 @@ from sklearn.model_selection import StratifiedKFold
 import LearnModel as lm
 import XgbModel as xm
 
+dataPath = "../data/manu_feature/"
 def loadPickle(filename):
     with open(filename, "rb") as f:
         return pickle.load(f)
@@ -19,28 +20,20 @@ def savePickle(target, filename):
     with open(filename, "wb") as f:
         pickle.dump(target, f)
 
-def loadTestData(model = 'tree'):
-    test_x = loadPickle("./data/originaldata/test_x.pkl")
-    TestResult = loadPickle("./data/originaldata/TestResult.pkl")
-    return np.array(test_x), TestResult
-
-def loadData():
-    train_x = loadPickle("./data/originaldata/train_x.pkl")
-    train_y = loadPickle("./data/originaldata/train_y.pkl")
-    label_dict = loadPickle("./data/originaldata/label_dict.pkl")
-    train_y = np.argmax(np.array(train_y), axis = 1)
-    return np.array(train_x), np.array(train_y), label_dict
-    
-def loadNormalizedTestData(model = 'tree'):
-    test_x = loadPickle("./data/normaldata/test_x.pkl")
-    TestResult = loadPickle("./data/normaldata/TestResult.pkl")
+def loadTestData(model = 'tree',dataPath = dataPath):
+    test_x = loadPickle("%stest_x.pkl"%dataPath)
+    TestResult = loadPickle("%sTestResult.pkl"%dataPath)
     return np.array(test_x), TestResult
     
-def loadNormalizedData(model = 'tree'):
-    train_x = loadPickle("./data/normaldata/train_x.pkl")
-    train_y = loadPickle("./data/normaldata/train_y.pkl")
-    label_dict = loadPickle("./data/normaldata/label_dict.pkl")
-    return np.array(train_x), np.argmax(np.array(train_y), axis = 1), label_dict
+def loadFeatureData(model = 'tree', dataPath = dataPath, argmax = False):
+    train_x = loadPickle("%strain_x.pkl"%dataPath)
+    train_y = loadPickle("%strain_y.pkl"%dataPath)
+    label_dict = loadPickle("%slabel_dict.pkl"%dataPath)
+    train_x = np.array(train_x)
+    train_y = np.array(train_y)
+    if argmax:
+        train_y = np.argmax(train_y, axis = 1)
+    return train_x, train_y, label_dict
 
     
 def predictAll():

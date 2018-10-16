@@ -57,11 +57,11 @@ class DeepCrossNet():
         wx0 = tf.expand_dims(x0, 2)
         wx = tf.expand_dims(xn, 2)
         dot = tf.matmul(wx0, tf.transpose(wx, [0,2,1]))
-        x_out = tf.tensordot(dot, w, 1) + b
+        x_out = tf.tensordot(dot, w, 1) + b + wx
         return tf.squeeze(x_out, 2)
 
     # input x should be 1 dim array. with is flattened
-    def dnn(self, x0, nlayers = 3, outdim = 64):
+    def dnn(self, x0, nlayers = 3, outdim = 64, is_training = True):
         x_out = x0
         stddev1 = 1/np.sqrt(self.sparse_dim + self.embed_dim)
         stddev2 = 1/np.sqrt(outdim)
@@ -72,11 +72,12 @@ class DeepCrossNet():
             else:
                 w = tf.Variable(tf.truncated_normal([outdim, outdim], stddev = stddev2), name = 'w')
             x_out = tf.add(tf.matmul(x_out, w), b)
-            x_out = tf.add(x_out, x0)
+            x_out = tf.layers.batch_normalization(x_out, training = is_training)
+#             x_out = tf.add(x_out, x0)
             x_out = tf.nn.relu(x_out)
         return x_out
         
-    def buildGraph(self, xs, xd, y, lr):
+    def buildGraph(self, xs, xd, y, lr, is_training = True):
         
         #embedding layer
         with tf.variable_scope("embed"):
@@ -90,7 +91,7 @@ class DeepCrossNet():
             for i in range(self.n_cross_layers):
                 xdc = self.cross_layer(xdc, x0)
 
-            xdnn = self.dnn(x0, outdim = self.dnn_dim, nlayers = self.n_dnn_layers)
+            xdnn = self.dnn(x0, outdim = self.dnn_dim, nlayers = self.n_dnn_layers, is_training = is_training)
             x1 = tf.concat([xdc, xdnn], axis = 1) 
 
             stddev = 1/np.sqrt(self.embed_dim + self.dense_dim + self.dnn_dim)
@@ -100,8 +101,11 @@ class DeepCrossNet():
             #logits = tf.squeeze(x_out, 1)
     
         y_out = tf.nn.softmax(logits)
-        logloss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits = logits, labels = y))
-        optima = tf.train.AdamOptimizer(learning_rate = lr).minimize(logloss)
+        logloss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits = logits, labels = y))
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            optima = tf.train.AdamOptimizer(learning_rate = lr).minimize(logloss)
+
         return y_out, logloss, optima
         
     def earlyStop(self, eval_loss):
@@ -127,8 +131,9 @@ class DeepCrossNet():
         xd = tf.placeholder(tf.float32, shape = [None, self.dense_dim], name = 'xd')
         y = tf.placeholder(tf.float32, shape = [None, self.classes], name = 'y')
         lr = tf.placeholder(tf.float32, name = 'lr')
+        is_training = tf.placeholder(tf.bool, name = 'is_bn_trainable')
 
-        y_out, logloss, optima = self.buildGraph(xs, xd, y, lr)
+        y_out, logloss, optima = self.buildGraph(xs, xd, y, lr, is_training)
         if self.sess != None:
             self.sess.close()
         self.sess = tf.Session()
@@ -144,25 +149,27 @@ class DeepCrossNet():
                 end = min((batch + 1) * self.batch_size, samples)
                 xs_batch = X_sparse[start:end]
                 xd_batch = X_dense[start:end]
-                sess.run(optima, feed_dict = {xs:xs_batch, xd:xd_batch, y:train_y[start:end], lr:cur_lr})
+                sess.run(optima, feed_dict = {xs:xs_batch, xd:xd_batch, y:train_y[start:end], lr:cur_lr,  is_training:True})
 
             cur_lr = cur_lr * self.learning_rate_decay
-            train_loss = sess.run(logloss, feed_dict = {xs:X_sparse[:1024], xd:X_dense[:1024], y:train_y[:1024]})
+            train_loss = sess.run(logloss, feed_dict = {xs:X_sparse[:1024], xd:X_dense[:1024], y:train_y[:1024], is_training:False})
             if eval_set != None:
-                eval_loss = sess.run(logloss, feed_dict = {xs:eval_set[0], xd:eval_set[1], y:eval_set[2]})
+                eval_loss = sess.run(logloss, feed_dict = {xs:eval_set[0][:1024], xd:eval_set[1][:1024],
+                                                           y:eval_set[2][:1024], is_training:False})
                 print("train_loss:%f eval_loss:%f"%(train_loss, eval_loss))
-                if self.earlyStop(eval_loss):
-                    break
+                
             else:
                 print("train_loss:%f"%(train_loss))
                 
-        if eval_set != None:
-            pred = sess.run(y_out, feed_dict = {xs:eval_set[0], xd:eval_set[1], y:eval_set[2]})
-            pred_label = np.argmax(pred, axis = 1)
-            true_label = np.argmax(np.array(eval_set[2]), axis = 1)
-            score = np.square(f1_score(true_label, pred_label, average = 'macro'))
-            print("f1-score:",score)
-            self.score = score
+            if eval_set != None and i%eval_batches == 0:
+                pred = sess.run(y_out, feed_dict = {xs:eval_set[0], xd:eval_set[1], y:eval_set[2], is_training:False})
+                pred_label = np.argmax(pred, axis = 1)
+                true_label = np.argmax(np.array(eval_set[2]), axis = 1)
+                score = np.square(f1_score(true_label, pred_label, average = 'macro'))
+                print("f1-score:",score)
+                self.score = score
+                if self.earlyStop(score):
+                    break
             
         self.sess = sess
         self.xs = xs
@@ -191,22 +198,22 @@ def loadPickle(filename):
     with open(filename, "rb") as f:
         return pickle.load(f)
     
-train_x_continuous = np.array(loadPickle("./data/normaldata/train_x_continuous.pkl"))
-train_x_onehot = np.array(loadPickle("./data/normaldata/train_x_onehot.pkl"))
-test_x_continous = np.array(loadPickle("./data/normaldata/test_x_continous.pkl"))
-test_x_onehot = np.array(loadPickle("./data/normaldata/test_x_onehot.pkl"))
-train_y = np.array(loadPickle("./data/normaldata/train_y.pkl"))
-label_dict = loadPickle("./data/normaldata/label_dict.pkl")
-labelTestResult = loadPickle("./data/normaldata/TestResult.pkl")
+train_x_continuous = np.array(loadPickle("../data/normaldata/train_x_continuous.pkl"))
+train_x_onehot = np.array(loadPickle("../data/normaldata/train_x_onehot.pkl"))
+test_x_continous = np.array(loadPickle("../data/normaldata/test_x_continous.pkl"))
+test_x_onehot = np.array(loadPickle("../data/normaldata/test_x_onehot.pkl"))
+train_y = np.array(loadPickle("../data/normaldata/train_y.pkl"))
+label_dict = loadPickle("../data/normaldata/label_dict.pkl")
+labelTestResult = loadPickle("../data/normaldata/TestResult.pkl")
 print("data loading finished!")
 with open("dcn.log", "w+") as f:
     f.writelines("start dcn\n")
     
-skf = StratifiedKFold(n_splits=3, random_state = 2018)
+skf = StratifiedKFold(n_splits=10, random_state = 2018)
 
-for lr in [0.005, 0.002, 0.001]:
+for lr in [0.00005]:
     for deeplayers in [5,6,7]:
-        for crosslayers in [1,2,3,4,5]:
+        for crosslayers in [2,3,4,5]:
             scores = []
             
             
@@ -216,9 +223,10 @@ for lr in [0.005, 0.002, 0.001]:
                              n_cross_layers = crosslayers, n_dnn_layers = deeplayers)
                 edata = (train_x_onehot[test_index], train_x_continuous[test_index], train_y[test_index])
                 dcn.fit(train_x_onehot[train_index], train_x_continuous[train_index], train_y[train_index], 
-                        eval_set = edata, early_stop = True, tolerance = 5, max_batches = 1000, eval_batches = 1)
+                        eval_set = edata, early_stop = True, tolerance = 200, max_batches = 1000, eval_batches = 5)
                 scores.append(dcn.score)
                 del dcn
+                break
             print("lr:%f, deeplayer:%d, crosslayser:%d score:%.4f\n"%(lr, deeplayers, crosslayers, np.mean(scores)))
             with open("dcn.log", "a+") as f:
                 f.writelines("lr:%f, deeplayer:%d, crosslayser:%d score:%.4f\n"%(lr, deeplayers, crosslayers, np.mean(scores)))
