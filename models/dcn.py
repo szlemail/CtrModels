@@ -62,28 +62,28 @@ class DeepCrossNet():
 
     # input x should be 1 dim array. with is flattened
     def dnn(self, x0, nlayers = 3, outdim = 64, is_training = True):
-        x_out = x0
-        stddev1 = 1/np.sqrt(self.sparse_dim + self.embed_dim)
-        stddev2 = 1/np.sqrt(outdim)
-        for i in range(nlayers):
-            b = tf.Variable(0.0, name = "b")
-            if i == 0:
-                w = tf.Variable(tf.truncated_normal([self.embed_dim + self.dense_dim, outdim], stddev = stddev1), name = 'w')
-            else:
-                w = tf.Variable(tf.truncated_normal([outdim, outdim], stddev = stddev2), name = 'w')
-            x_out = tf.add(tf.matmul(x_out, w), b)
-            x_out = tf.layers.batch_normalization(x_out, training = is_training)
-#             x_out = tf.add(x_out, x0)
-            x_out = tf.nn.relu(x_out)
-        return x_out
+          layer1 = tf.layers.dense(inputs = x0, units = 256, activation = tf.nn.relu, use_bias   = True)
+          bn1 = tf.layers.batch_normalization(inputs = layer1, axis = -1, 
+                              momentum   = 0.99,
+                              epsilon    = 0.001,
+                              center     = True,
+                              scale      = True)
+       
+          layer2 = tf.layers.dense(inputs = bn1, units = outdim, activation = tf.nn.relu, use_bias   = True)
+          bn2 = tf.layers.batch_normalization(inputs = layer2, axis = -1, 
+                              momentum   = 0.99,
+                              epsilon    = 0.001,
+                              center     = True,
+                              scale      = True)
+          return bn2
         
     def buildGraph(self, xs, xd, y, lr, is_training = True):
         
         #embedding layer
         with tf.variable_scope("embed"):
-            stddev = 1/np.sqrt(self.sparse_dim + self.embed_dim)
+            stddev = 1/np.sqrt(self.sparse_dim)
             w0 = tf.Variable(tf.truncated_normal([self.sparse_dim, self.embed_dim], stddev = stddev), name = 'w0')
-            xe = tf.matmul(xs, w0)
+            xe = tf.matmul(xs, w0, a_is_sparse = True)
 
         with tf.variable_scope("dcn"):
             x0 = tf.concat([xd, xe], axis = 1) 
@@ -119,9 +119,9 @@ class DeepCrossNet():
     def fit(self, X_sparse, X_dense, train_y, eval_set = None, early_stop = True, tolerance = 5, max_batches = 2000, eval_batches = 1):
         #params
         self.sparse_dim = X_sparse.shape[1]
-        self.embed_dim = self.embed_dim_multiple * round(math.pow(self.sparse_dim, 0.25))
+        self.embed_dim = self.embed_dim_multiple * round(math.pow(self.sparse_dim, 0.5))
         self.dense_dim = X_dense.shape[1]
-        self.dnn_dim = self.embed_dim + self.dense_dim
+        self.dnn_dim = 1024
         self.early_stop = early_stop
         self.tol = tolerance
         self.losses = []
@@ -162,14 +162,25 @@ class DeepCrossNet():
                 print("train_loss:%f"%(train_loss))
                 
             if eval_set != None and i%eval_batches == 0:
-                pred = sess.run(y_out, feed_dict = {xs:eval_set[0], xd:eval_set[1], y:eval_set[2], is_training:False})
-                pred_label = np.argmax(pred, axis = 1)
-                true_label = np.argmax(np.array(eval_set[2]), axis = 1)
-                score = np.square(f1_score(true_label, pred_label, average = 'macro'))
-                print("f1-score:",score)
-                self.score = score
-                if self.earlyStop(score):
-                    break
+                eval_len = eval_set[0].shape[0]
+                sum_score = 0
+                num_score = 0
+                for index in range(0, eval_len, 4096):
+                    end = min(index + 4096, eval_len)
+                    pred = sess.run(y_out, feed_dict = {xs:eval_set[0][index:end],
+                                                        xd:eval_set[1][index:end],
+                                                        y:eval_set[2][index:end],
+                                                        is_training:False})
+                    pred_label = np.argmax(pred, axis = 1)
+                    true_label = np.argmax(np.array(eval_set[2][index:end]), axis = 1)
+                    score = np.square(f1_score(true_label, pred_label, average = 'macro'))
+                    sum_score = sum_score + score
+                    num_score = num_score + 1
+                if num_score > 0:
+                    print("f1-score:",sum_score/num_score)
+                    self.score = sum_score/num_score
+                    if self.earlyStop(self.score):
+                        break
             
         self.sess = sess
         self.xs = xs
@@ -211,15 +222,15 @@ with open("dcn.log", "w+") as f:
     
 skf = StratifiedKFold(n_splits=10, random_state = 2018)
 
-for lr in [0.00005]:
-    for deeplayers in [5,6,7]:
-        for crosslayers in [2,3,4,5]:
+for lr in [0.001]:
+    for deeplayers in [3,2]:
+        for crosslayers in [4,5,6]:
             scores = []
             
             
             for train_index, test_index in skf.split(train_x_continuous, np.argmax(train_y, axis = 1)):
                 dcn = DeepCrossNet(batch_size = 64, classes = 11, learning_rate = lr,
-                             learning_rate_decay = 0.95, embed_dim_multiple = 12,
+                             learning_rate_decay = 0.9, embed_dim_multiple = 5,
                              n_cross_layers = crosslayers, n_dnn_layers = deeplayers)
                 edata = (train_x_onehot[test_index], train_x_continuous[test_index], train_y[test_index])
                 dcn.fit(train_x_onehot[train_index], train_x_continuous[train_index], train_y[train_index], 
