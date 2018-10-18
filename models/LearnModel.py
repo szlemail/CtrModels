@@ -13,6 +13,19 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import f1_score
 from scipy.sparse import coo_matrix
 import gc
+
+def square_f1_score(y_true, y_pred):
+    y_pred = np.array(y_pred)
+    y_true = np.array(y_true)
+    samples = len(y_true)
+    classes = int(len(y_pred)/samples)
+    df = pd.DataFrame()
+    for i in range(0, classes):
+        df['c_%d'%i] =  y_pred[samples * i: samples*(i+1)]
+    pred = np.argmax(np.array(df), axis = 1)
+    score = np.square(f1_score(y_true, pred, average = 'macro'))
+    return 'square_f1_score', score, True
+
 class LearnModel():
     
     def __init__(self, X, y):
@@ -82,14 +95,14 @@ class LearnModel():
         
         self.lgbc = lgb.LGBMClassifier(boosting_type='gbdt', class_weight=None, colsample_bytree=max(0.2, colsample_bytree/16),
             learning_rate=0.05*learning_rate + 0.05, max_depth=min(2 + max_depth, num_leaves + 3), min_child_samples= 1 + min_child_samples,
-            min_child_weight=min_child_weight+1, min_split_gain=0.1/(min_gain_to_split+1), n_estimators=600,
+            min_child_weight=min_child_weight+1, min_split_gain=0.1/(min_gain_to_split+1), n_estimators=2000,
             n_jobs = -1, num_leaves = num_leaves + 3, objective="multiclass", random_state=10,
             reg_alpha=0.9**reg_alpha, reg_lambda=0.9**reg_lambda, silent=True, subsample=max(0.2, subsample/16),
             subsample_for_bin=200000, subsample_freq=subsample_freq+1)
 
         
     def fit(self, X, y, eval_set = None):
-        self.lgbc.fit(self.X, self.y, eval_set = eval_set, early_stopping_rounds = 3, verbose = True)
+        self.lgbc.fit(self.X, self.y, eval_set = eval_set, eval_metric = square_f1_score, early_stopping_rounds = 100, verbose = True)
 
     def predict(self, X):
         ypred = self.lgbc.predict(X, num_iteration = self.lgbc.best_iteration_)
@@ -103,7 +116,7 @@ class LearnModel():
         train_X = coo_matrix(train_X)
         eval_x = coo_matrix(eval_x)
         edata = [(eval_x, eval_y)]
-        self.lgbc.fit(train_X, train_y, eval_set = edata, early_stopping_rounds = 3, verbose = True)
+        self.lgbc.fit(train_X, train_y, eval_set = edata, eval_metric = square_f1_score, early_stopping_rounds = 100, verbose = True)
         pred = self.lgbc.predict(eval_x, num_iteration = self.lgbc.best_iteration_)
         score = (np.square(f1_score(eval_y, pred, average='macro')))
         print("gene:0x%x score:%.4f"%(self.chromosome, score))

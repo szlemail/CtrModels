@@ -8,10 +8,15 @@ import lightgbm as lgb
 import argparse
 import GA
 from sklearn.model_selection import StratifiedKFold
+import sys
+sys.path.append("../models")
 import LearnModel as lm
 import XgbModel as xm
 
-dataPath = "../data/manu_feature/"
+feDataPath = "../data/fedata/"
+norDataPath = "../data/normaldata/"
+oriDataPath = "../data/originaldata/"
+
 def loadPickle(filename):
     with open(filename, "rb") as f:
         return pickle.load(f)
@@ -20,16 +25,15 @@ def savePickle(target, filename):
     with open(filename, "wb") as f:
         pickle.dump(target, f)
 
-def loadTestData(model = 'tree',dataPath = dataPath):
+def loadTestData(dataPath = feDataPath):
     test_x = loadPickle("%stest_x.pkl"%dataPath)
     TestResult = loadPickle("%sTestResult.pkl"%dataPath)
     return np.array(test_x), TestResult
     
-def loadFeatureData(model = 'tree', dataPath = dataPath, argmax = False):
+def loadFeatureData(dataPath = feDataPath, argmax = False):
     train_x = loadPickle("%strain_x.pkl"%dataPath)
     train_y = loadPickle("%strain_y.pkl"%dataPath)
     label_dict = loadPickle("%slabel_dict.pkl"%dataPath)
-    train_x = np.array(train_x)
     train_y = np.array(train_y)
     if argmax:
         train_y = np.argmax(train_y, axis = 1)
@@ -101,7 +105,7 @@ def predictAll():
 
 def getArgs():
     parser = argparse.ArgumentParser()
-    parser.add_argument( "--data", "-d", type = str, help = "'original' or 'normalized', select the data source")
+    parser.add_argument( "--data", "-d", type = str, help = "'original' or 'normalized' or 'fe', select the data source")
     parser.add_argument("--model","-m", type = str, help = "'lgb','xgb' select the ml model" )
     parser.add_argument("--predict","-p", type = str, help = "if predict is set, predict all model and save it to result dir. ignor all ther args" )
     return parser.parse_args()
@@ -115,18 +119,27 @@ if __name__ == '__main__':
         print(args)
         if args.data[:3] == "nor":
             if args.model == "lgb" or args.model == "xgb":
-                train_x, train_y, label_dict = loadNormalizedData(model = 'tree')
+                train_x, train_y, label_dict = loadFeatureData(dataPath = norDataPath)
                 print("GA on normalized data")
                 ga = GA.GA(30, np.array(train_x)[:], train_y[:], big_is_better = True, model = args.model)
             else:
                 print("model %s not ready now!"%args.model)
-        else:
+        elif args.data[:3] == "ori":
             if args.model == "lgb" or args.model == "xgb":
-                train_x, train_y, label_dict = loadData()
+                train_x, train_y, label_dict = loadFeatureData(dataPath = oriDataPath)
                 print("GA on original data")
                 ga = GA.GA(30, np.array(train_x)[:], np.array(train_y).astype(int)[:], big_is_better = True, model = args.model)
             else:
                 print("model %s not ready now!"%args.model)
+        elif args.data[:2] == "fe":
+            if args.model == "lgb" or args.model == "xgb":
+                train_x, train_y, label_dict = loadFeatureData(dataPath = feDataPath)
+                print("GA on original data")
+                ga = GA.GA(30, train_x.todense(), train_y, big_is_better = True, model = args.model)
+            else:
+                print("model %s not ready now!"%args.model)
+        else:
+            exit("error")
 
         if ga != None:
             last_score = 0 

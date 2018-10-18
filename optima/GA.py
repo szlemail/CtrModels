@@ -1,6 +1,8 @@
 import random
 import numpy as np
 import math
+import sys
+sys.path.append("../models")
 from LearnModel import LearnModel
 from XgbModel import XgbModel
 from xgboost import XGBRegressor
